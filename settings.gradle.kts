@@ -55,7 +55,11 @@ includeBuild("build-logic")
 
 include("worldedit-libs")
 
-listOf("1_20_2", "1_20_4", "1_20_5", "1_21", "1_21_4", "1_21_5", "1_21_6", "1_21_9", "1_21_11", "26.1").forEach {
+// feat/mc-26.1: only the 26.1 adapter is built for this branch. The older
+// adapters are kept in the tree but excluded from the Gradle build because
+// their paperweight dev-bundles fail remap under Gradle 9.x, and they aren't
+// usable on Paper 26.1 anyway.
+listOf("26.1").forEach {
     include("worldedit-bukkit:adapters:adapter-$it")
 }
 

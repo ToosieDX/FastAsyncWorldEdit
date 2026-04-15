@@ -5,45 +5,27 @@ import com.fastasyncworldedit.core.Fawe;
 import com.fastasyncworldedit.core.queue.IChunkCache;
 import com.fastasyncworldedit.core.queue.IChunkGet;
 import com.fastasyncworldedit.core.queue.implementation.chunk.ChunkCache;
-import com.google.common.collect.ImmutableList;
-import com.mojang.serialization.Lifecycle;
 import com.sk89q.worldedit.bukkit.BukkitAdapter;
-import com.sk89q.worldedit.bukkit.WorldEditPlugin;
 import com.sk89q.worldedit.bukkit.adapter.Refraction;
 import com.sk89q.worldedit.extent.Extent;
 import com.sk89q.worldedit.regions.Region;
 import com.sk89q.worldedit.util.io.file.SafeFiles;
 import com.sk89q.worldedit.world.RegenOptions;
-import net.minecraft.core.Holder;
 import net.minecraft.resources.ResourceKey;
-import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.dedicated.DedicatedServer;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.util.ProgressListener;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.LevelSettings;
-import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.dimension.LevelStem;
 import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
-import net.minecraft.world.level.levelgen.WorldOptions;
-import net.minecraft.world.level.storage.LevelData;
 import net.minecraft.world.level.storage.LevelStorageSource;
-import net.minecraft.world.level.storage.PrimaryLevelData;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.bukkit.craftbukkit.CraftServer;
 import org.bukkit.craftbukkit.CraftWorld;
-import org.bukkit.generator.BiomeProvider;
 
-import javax.annotation.Nonnull;
 import java.lang.reflect.Field;
 import java.nio.file.Path;
 import java.util.Map;
-import java.util.OptionalLong;
 import java.util.function.BooleanSupplier;
-import java.util.function.Supplier;
-
-import static net.minecraft.core.registries.Registries.BIOME;
 
 public class PaperweightRegen extends Regenerator {
 
@@ -108,103 +90,18 @@ public class PaperweightRegen extends Regenerator {
 
     @Override
     protected boolean initNewWorld() throws Exception {
-        //world folder
-        tempDir = java.nio.file.Files.createTempDirectory("FastAsyncWorldEditWorldGen");
-
-        //prepare for world init (see upstream implementation for reference)
-        World.Environment environment = originalBukkitWorld.getEnvironment();
-        org.bukkit.generator.ChunkGenerator generator = originalBukkitWorld.getGenerator();
-        LevelStorageSource levelStorageSource = LevelStorageSource.createDefault(tempDir);
-        ResourceKey<LevelStem> levelStemResourceKey = getWorldDimKey(environment);
-        session = levelStorageSource.createAccess("faweregentempworld", levelStemResourceKey);
-        LevelData originalWorldData = originalServerWorld.serverLevelData;
-
-        MinecraftServer server = originalServerWorld.getCraftServer().getServer();
-        WorldOptions originalOpts = originalWorldData.worldGenOptions();
-        WorldOptions newOpts = options.getSeed().isPresent()
-                ? originalOpts.withSeed(OptionalLong.of(seed))
-                : originalOpts;
-        LevelSettings newWorldSettings = new LevelSettings(
-                "faweregentempworld",
-                originalWorldData.settings.gameType(),
-                originalWorldData.settings.hardcore(),
-                originalWorldData.settings.difficulty(),
-                originalWorldData.settings.allowCommands(),
-                originalWorldData.settings.gameRules(),
-                originalWorldData.settings.getDataConfiguration()
+        // Paper 26.1 refactored world loading around PaperWorldLoader /
+        // SavedDataStorage / LoadedWorldData. The ServerLevel constructor
+        // now demands those objects instead of a PrimaryLevelData + RandomSequences
+        // pair, and LevelData no longer exposes settings/worldGenOptions/etc.
+        // Reconstructing a "temporary regen world" against this new API is
+        // a significant port that is out of scope for the initial 26.1
+        // compatibility build, so regen is disabled here until upstream FAWE
+        // publishes a real port.
+        throw new UnsupportedOperationException(
+                "Region regeneration (//regen) is not yet supported on Paper 26.1. "
+                        + "All other FastAsyncWorldEdit features are available."
         );
-
-        PrimaryLevelData.SpecialWorldProperty specialWorldProperty =
-                originalWorldData.isFlatWorld()
-                        ? PrimaryLevelData.SpecialWorldProperty.FLAT
-                        : originalWorldData.isDebugWorld()
-                                ? PrimaryLevelData.SpecialWorldProperty.DEBUG
-                                : PrimaryLevelData.SpecialWorldProperty.NONE;
-        PrimaryLevelData newWorldData = new PrimaryLevelData(newWorldSettings, newOpts, specialWorldProperty, Lifecycle.stable());
-
-        BiomeProvider biomeProvider = getBiomeProvider();
-
-
-        //init world
-        freshWorld = Fawe.instance().getQueueHandler().sync((Supplier<ServerLevel>) () -> new ServerLevel(
-                server,
-                server.executor,
-                session,
-                newWorldData,
-                originalServerWorld.dimension(),
-                new LevelStem(
-                        originalServerWorld.dimensionTypeRegistration(),
-                        originalServerWorld.getChunkSource().getGenerator()
-                ),
-                originalServerWorld.isDebug(),
-                seed,
-                ImmutableList.of(),
-                false,
-                originalServerWorld.getRandomSequences(),
-                environment,
-                generator,
-                biomeProvider
-        ) {
-
-            private final Holder<Biome> singleBiome = options.hasBiomeType() ? DedicatedServer.getServer().registryAccess()
-                    .lookupOrThrow(BIOME).asHolderIdMap().byIdOrThrow(
-                            WorldEditPlugin.getInstance().getBukkitImplAdapter().getInternalBiomeId(options.getBiomeType())
-                    ) : null;
-
-            @Override
-            public @Nonnull Holder<Biome> getUncachedNoiseBiome(int biomeX, int biomeY, int biomeZ) {
-                if (options.hasBiomeType()) {
-                    return singleBiome;
-                }
-                return super.getUncachedNoiseBiome(biomeX, biomeY, biomeZ);
-            }
-
-            @Override
-            public void save(
-                    final ProgressListener progressListener,
-                    final boolean flush,
-                    final boolean savingDisabled
-            ) {
-                // noop, spigot
-            }
-
-            @Override
-            public void save(
-                    final ProgressListener progressListener,
-                    final boolean flush,
-                    final boolean savingDisabled,
-                    final boolean close
-            ) {
-                // noop, paper
-            }
-        }).get();
-        freshWorld.noSave = true;
-        removeWorldFromWorldsMap();
-        newWorldData.checkName(originalServerWorld.serverLevelData.getLevelName()); //rename to original world name
-        if (paperConfigField != null) {
-            paperConfigField.set(freshWorld, originalServerWorld.paperConfig());
-        }
-        return true;
     }
 
     @Override

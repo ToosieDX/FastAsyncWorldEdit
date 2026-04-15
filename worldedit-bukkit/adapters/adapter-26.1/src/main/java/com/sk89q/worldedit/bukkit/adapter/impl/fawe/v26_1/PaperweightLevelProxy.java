@@ -31,7 +31,10 @@ public class PaperweightLevelProxy extends ServerLevel {
 
     @SuppressWarnings("DataFlowIssue")
     private PaperweightLevelProxy() {
-        super(null, null, null, null, null, null, true, 0L, null, true, null, null, null, null);
+        // 16-arg Paper 26.1 ServerLevel constructor. This is never actually
+        // invoked — `getInstance()` below uses Unsafe.allocateInstance to
+        // construct the proxy — it only has to satisfy the Java compiler.
+        super(null, null, null, null, null, null, true, 0L, null, true, null, null, null, null, null, null);
         throw new IllegalStateException("Cannot be instantiated");
     }
 

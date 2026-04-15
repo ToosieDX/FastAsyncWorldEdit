@@ -155,10 +155,17 @@ tasks.named<Copy>("processResources") {
     }
 }
 
+// Force worldedit-core to be evaluated before worldedit-bukkit so that accessing
+// its sourceSets from the reobfShadowJar task below doesn't trip
+// "JavaPluginExtension does not exist" under the stricter project isolation rules
+// enforced by newer Gradle / paperweight versions.
+evaluationDependsOn(":worldedit-core")
+
 tasks.register<ShadowJar>("reobfShadowJar") {
     // The `fawe.properties` file from `worldedit-core` is not automatically
     // included, so we explicitly add the `worldedit-core` source set output.
-    from(project(":worldedit-core").sourceSets.main.get().output)
+    // Wrapped in a lambda so the lookup is deferred until task execution.
+    from({ project(":worldedit-core").sourceSets.main.get().output })
     archiveFileName.set("${rootProject.name}-Bukkit-${project.version}.${archiveExtension.getOrElse("jar")}")
     configurations = listOf(
         project.configurations.runtimeClasspath.get(), // as is done by shadow for the default shadowJar
@@ -259,7 +266,16 @@ tasks.withType<ShadowJar>().configureEach {
 
 tasks.named("assemble").configure {
     dependsOn("shadowJar")
-    dependsOn("reobfShadowJar")
+    // Paper 26.1's dev-bundle no longer ships reobf mappings (the whole
+    // platform is Mojang-mapped at runtime), so reobfShadowJar can't build.
+    // The mojmap shadowJar above is the one that actually runs on Paper 26.1+.
+    // dependsOn("reobfShadowJar")
+}
+
+// Paper 26.1+ is fully Mojang-mapped — skip the spigot-mapped artifact path.
+tasks.named("reobfShadowJar").configure { enabled = false }
+project.project(":worldedit-bukkit:adapters").subprojects.forEach { sub ->
+    sub.tasks.matching { it.name == "reobfJar" }.configureEach { enabled = false }
 }
 
 publishMods {

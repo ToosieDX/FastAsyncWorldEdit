@@ -365,24 +365,15 @@ public final class PaperweightPlatformAdapter extends NMSAdapter {
         MinecraftServer.getServer().execute(() -> {
             try {
                 ChunkPos pos = levelChunk.getPos();
-                ClientboundLevelChunkWithLightPacket packet;
-                if (PaperLib.isPaper()) {
-                    packet = new ClientboundLevelChunkWithLightPacket(
-                            levelChunk,
-                            nmsWorld.getLightEngine(),
-                            null,
-                            null,
-                            false // last false is to not bother with x-ray
-                    );
-                } else {
-                    // deprecated on paper - deprecation suppressed
-                    packet = new ClientboundLevelChunkWithLightPacket(
-                            levelChunk,
-                            nmsWorld.getLightEngine(),
-                            null,
-                            null
-                    );
-                }
+                // Paper 26.1 dropped the trailing anti-xray boolean from this
+                // constructor — there is now a single 4-arg form used on both
+                // Paper and Spigot paths.
+                ClientboundLevelChunkWithLightPacket packet = new ClientboundLevelChunkWithLightPacket(
+                        levelChunk,
+                        nmsWorld.getLightEngine(),
+                        null,
+                        null
+                );
                 nearbyPlayers(nmsWorld, pos).forEach(p -> p.connection.send(packet));
             } finally {
                 NMSAdapter.endChunkPacketSend(nmsWorld.getWorld().getName(), pair, lockHolder);
@@ -459,7 +450,8 @@ public final class PaperweightPlatformAdapter extends NMSAdapter {
             var packedData = new PalettedContainerRO.PackedData<>(palette, Optional.ofNullable(bits));
             DataResult<PalettedContainer<net.minecraft.world.level.block.state.BlockState>> result;
             if (PaperLib.isPaper()) {
-                result = PalettedContainer.unpack(strategy, packedData, Blocks.AIR.defaultBlockState(), null);
+                // Paper 26.1: unpack() now takes only (strategy, packedData).
+                result = PalettedContainer.unpack(strategy, packedData);
             } else {
                 //noinspection unchecked
                 result = (DataResult<PalettedContainer<net.minecraft.world.level.block.state.BlockState>>)
@@ -535,12 +527,8 @@ public final class PaperweightPlatformAdapter extends NMSAdapter {
         );
         DataResult<PalettedContainer<Holder<Biome>>> result;
         if (PaperLib.isPaper()) {
-            result = PalettedContainer.unpack(
-                    strategy,
-                    packedData,
-                    biomeRegistry.byIdOrThrow(adapter.getInternalBiomeId(BiomeTypes.PLAINS)),
-                    null
-            );
+            // Paper 26.1: unpack() now takes only (strategy, packedData).
+            result = PalettedContainer.unpack(strategy, packedData);
         } else {
             try {
                 //noinspection unchecked
