@@ -87,6 +87,18 @@ public final class PaperweightPlatformAdapter extends NMSAdapter {
     public static final Field fieldPalette;
 
     private static final MethodHandle palettedContainerUnpackSpigot;
+    /**
+     * Paper-path handle for {@code PalettedContainer.unpack}. Paper 26.1 exists in the wild
+     * in two variants: the vanilla 2-arg {@code (Strategy, PackedData)} form and the
+     * Anti-Xray-patched 4-arg {@code (Strategy, PackedData, defaultValue, presetValues[])}
+     * form. Different Paper builds — and even different cached paperweight dev bundles for
+     * the same build string — expose different signatures, so we look up whichever is
+     * actually present at runtime and adapt the call accordingly. The handle is always
+     * bound to a 2-arg invoker: if the underlying method is 4-arg, the trailing
+     * {@code (defaultValue, null)} is inserted via {@link MethodHandles#insertArguments}.
+     */
+    private static final MethodHandle palettedContainerUnpackPaperBlocks;
+    private static final MethodHandle palettedContainerUnpackPaperBiomes;
 
     private static final Field fieldTickingFluidCount;
     private static final Field fieldTickingBlockCount;
@@ -129,6 +141,52 @@ public final class PaperweightPlatformAdapter extends NMSAdapter {
                     "a", // unpack
                     MethodType.methodType(DataResult.class, Strategy.class, PalettedContainerRO.PackedData.class)
             );
+
+            // Paper 26.1's Anti-Xray patches bumped PalettedContainer.unpack from 2-arg
+            // to 4-arg on some builds. Locate whichever exists at runtime and wrap it as
+            // a 2-arg callable: if the underlying method is 4-arg, we pre-bind the last
+            // two params (defaultValue, null) via insertArguments.
+            if (PaperLib.isPaper()) {
+                MethodType twoArg = MethodType.methodType(
+                        DataResult.class,
+                        Strategy.class,
+                        PalettedContainerRO.PackedData.class
+                );
+                MethodType fourArgBlocks = MethodType.methodType(
+                        DataResult.class,
+                        Strategy.class,
+                        PalettedContainerRO.PackedData.class,
+                        Object.class,
+                        Object[].class
+                );
+                MethodHandle blocksHandle;
+                MethodHandle biomesHandle;
+                try {
+                    // Try 4-arg (Anti-Xray) first.
+                    MethodHandle raw = lookup.findStatic(PalettedContainer.class, "unpack", fourArgBlocks);
+                    // Pre-bind (defaultValue=AIR, presetValues=null) for the block-state caller.
+                    blocksHandle = MethodHandles.insertArguments(
+                            raw, 2, Blocks.AIR.defaultBlockState(), (Object) null
+                    );
+                    // For biomes we don't have a fixed default at lookup time — bind a
+                    // placeholder null default + null presets. PalettedContainer only
+                    // uses the default when rebuilding for Anti-Xray preset fill, which
+                    // never fires on our hand-crafted PackedData.
+                    biomesHandle = MethodHandles.insertArguments(
+                            raw, 2, (Object) null, (Object) null
+                    );
+                } catch (NoSuchMethodException e4) {
+                    // Fall back to the vanilla 2-arg form.
+                    MethodHandle raw = lookup.findStatic(PalettedContainer.class, "unpack", twoArg);
+                    blocksHandle = raw;
+                    biomesHandle = raw;
+                }
+                palettedContainerUnpackPaperBlocks = blocksHandle;
+                palettedContainerUnpackPaperBiomes = biomesHandle;
+            } else {
+                palettedContainerUnpackPaperBlocks = null;
+                palettedContainerUnpackPaperBiomes = null;
+            }
 
             fieldTickingFluidCount = LevelChunkSection.class.getDeclaredField(Refraction.pickName(
                     "tickingFluidCount",
@@ -450,8 +508,12 @@ public final class PaperweightPlatformAdapter extends NMSAdapter {
             var packedData = new PalettedContainerRO.PackedData<>(palette, Optional.ofNullable(bits));
             DataResult<PalettedContainer<net.minecraft.world.level.block.state.BlockState>> result;
             if (PaperLib.isPaper()) {
-                // Paper 26.1: unpack() now takes only (strategy, packedData).
-                result = PalettedContainer.unpack(strategy, packedData);
+                // Route through the runtime-resolved handle (see static init). This works
+                // whether the underlying Paper build exposes the 2-arg vanilla unpack or
+                // the 4-arg Anti-Xray-patched unpack.
+                //noinspection unchecked
+                result = (DataResult<PalettedContainer<net.minecraft.world.level.block.state.BlockState>>)
+                        palettedContainerUnpackPaperBlocks.invoke(strategy, packedData);
             } else {
                 //noinspection unchecked
                 result = (DataResult<PalettedContainer<net.minecraft.world.level.block.state.BlockState>>)
@@ -527,8 +589,15 @@ public final class PaperweightPlatformAdapter extends NMSAdapter {
         );
         DataResult<PalettedContainer<Holder<Biome>>> result;
         if (PaperLib.isPaper()) {
-            // Paper 26.1: unpack() now takes only (strategy, packedData).
-            result = PalettedContainer.unpack(strategy, packedData);
+            // Route through the runtime-resolved handle (see static init). Works against
+            // both vanilla 2-arg and Paper's 4-arg Anti-Xray-patched unpack.
+            try {
+                //noinspection unchecked
+                result = (DataResult<PalettedContainer<Holder<Biome>>>)
+                        palettedContainerUnpackPaperBiomes.invoke(strategy, packedData);
+            } catch (Throwable e) {
+                throw new RuntimeException("Failed to create biome palette for Paper", e);
+            }
         } else {
             try {
                 //noinspection unchecked
